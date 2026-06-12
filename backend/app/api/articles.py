@@ -1,9 +1,11 @@
 """Article API routes."""
 
+import base64
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -105,6 +107,116 @@ async def delete_article(article_id: int, db: AsyncSession = Depends(get_db)):
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
     await db.delete(article)
+
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+@router.post("/batch-delete", status_code=200)
+async def batch_delete_articles(
+    data: BatchDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = 0
+    missing: list[int] = []
+    for aid in data.ids:
+        article = await db.get(Article, aid)
+        if not article:
+            missing.append(aid)
+            continue
+        await db.delete(article)
+        deleted += 1
+    return {"deleted": deleted, "missing": missing}
+
+
+class CoverFetchRequest(BaseModel):
+    mode: str = Field(..., description="封面模式: search | ai | manual")
+
+
+@router.post("/{article_id}/cover-fetch", response_model=ArticleResponse)
+async def fetch_cover(
+    article_id: int,
+    data: CoverFetchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate / fetch a cover image for the article based on the requested mode.
+
+    - 'search' — pull a topic-matching image from the web (Wikimedia → Picsum)
+    - 'ai'     — generate a cover with DALL-E 3 (requires OPENAI_API_KEY)
+    - 'manual' — no-op: caller should PATCH the cover_image URL via PUT /{id}
+
+    The resulting image is stored as a base64 data URL in `cover_image` and
+    `cover_mode` is updated to reflect the source.
+
+    All exceptions are caught and returned as HTTP 500 with a descriptive
+    `detail` so the frontend can surface the real reason to the user.
+    """
+    from app.services.cover_service import ai_generate_cover_image, search_cover_image
+    import logging
+    logger = logging.getLogger(__name__)
+
+    article = await db.get(Article, article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="文章不存在")
+
+    mode = data.mode
+    if mode not in ("search", "ai", "manual"):
+        raise HTTPException(status_code=400, detail=f"无效的封面模式: {mode}")
+
+    try:
+        if mode == "manual":
+            # Manual mode just records the choice; the URL is set by the frontend via PUT
+            article.cover_mode = "manual"
+        elif mode == "search":
+            image_bytes = await search_cover_image(article.title, article.content or "")
+            if not image_bytes:
+                raise HTTPException(
+                    status_code=502,
+                    detail="自动搜图失败：Wikimedia Commons 和 Picsum 都无法返回图片，请检查网络后重试。",
+                )
+            b64 = base64.b64encode(image_bytes).decode("ascii")
+            article.cover_image = f"data:image/jpeg;base64,{b64}"
+            article.cover_mode = "search"
+        elif mode == "ai":
+            try:
+                image_bytes = await ai_generate_cover_image(article.title, article.content or "")
+            except RuntimeError as exc:
+                # ai_generate_cover_image raises RuntimeError with a descriptive
+                # message — surface it to the user
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"AI 生成封面失败：{exc}",
+                )
+            if not image_bytes:
+                raise HTTPException(
+                    status_code=502,
+                    detail="AI 生成封面失败：未配置 OPENAI_API_KEY。请到 设置 → LLM 配置 中配置。",
+                )
+            b64 = base64.b64encode(image_bytes).decode("ascii")
+            article.cover_image = f"data:image/png;base64,{b64}"
+            article.cover_mode = "ai"
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("fetch_cover generation failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"封面生成异常 ({mode}): {type(exc).__name__}: {str(exc)[:300]}",
+        )
+
+    try:
+        await db.commit()
+        await db.refresh(article)
+    except Exception as exc:
+        logger.exception("db commit failed in fetch_cover")
+        raise HTTPException(
+            status_code=500,
+            detail=f"封面已生成但保存到数据库失败: {type(exc).__name__}: {str(exc)[:200]}",
+        )
+
+    return ArticleResponse.model_validate(article)
 
 
 @router.post("/generate", response_model=GenerateResponse)

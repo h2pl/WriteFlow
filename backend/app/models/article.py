@@ -29,6 +29,9 @@ class Article(Base):
     tags: Mapped[str] = mapped_column(String(500), nullable=True)  # comma-separated
     category: Mapped[str] = mapped_column(String(100), nullable=True)
     cover_image: Mapped[str] = mapped_column(String(1000), nullable=True)
+    # Cover strategy: 'manual' = user-supplied URL/data, 'search' = auto-searched from web,
+    # 'ai' = AI-generated image. None means use the default (search) at publish time.
+    cover_mode: Mapped[str] = mapped_column(String(20), nullable=True, default=None)
 
     # AI generation metadata
     llm_provider: Mapped[str] = mapped_column(String(50), nullable=True)

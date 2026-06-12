@@ -1,15 +1,20 @@
 """LLM configuration API routes."""
 
+import os
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
-from app.config import settings
+from app.config import BASE_DIR, settings
 from app.models.schemas import LLMProviderInfo, PlatformInfo
 from app.services.llm_service import llm_service
 from app.services.publish_service import publish_service
 
 router = APIRouter(prefix="/llm", tags=["llm"])
+
+ENV_PATH = BASE_DIR / ".env"
 
 
 @router.get("/providers", response_model=list[LLMProviderInfo])
@@ -81,21 +86,72 @@ async def get_settings():
     }
 
 
+def _persist_to_env(updates: dict) -> None:
+    """Write the given key=value pairs to the .env file, preserving comments and order."""
+    if not updates:
+        return
+
+    lines: list[str] = []
+    if ENV_PATH.exists():
+        lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+
+    # Track which keys we have updated so we can append new ones at the end
+    keys_written: set[str] = set()
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        # Match KEY=... (allow leading whitespace, ignore comments)
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in updates:
+                new_lines.append(f"{key}={updates[key]}")
+                keys_written.add(key)
+                continue
+        new_lines.append(line)
+
+    # Append keys that didn't exist in the file
+    for key, value in updates.items():
+        if key not in keys_written:
+            new_lines.append(f"{key}={value}")
+
+    ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
 @router.put("/settings")
 async def update_settings(data: SettingsUpdate):
-    updated = []
-    for field, value in data.model_dump(exclude_unset=True).items():
-        if value is not None and value != "":
-            setattr(settings, field, value)
-            updated.append(field)
+    raw_updates = data.model_dump(exclude_unset=True)
+    updates: dict[str, str] = {}
+    updated: list[str] = []
 
-    # Re-init LLM providers
+    for field, value in raw_updates.items():
+        # Skip masked placeholders (e.g. "abcd****wxyz") so we don't overwrite
+        # a real key with a masked value echoed back from the frontend.
+        if value is None:
+            continue
+        if isinstance(value, str) and "****" in value:
+            continue
+        if value == "":
+            continue
+        setattr(settings, field, value)
+        updates[field] = value
+        updated.append(field)
+
+    if updates:
+        try:
+            _persist_to_env(updates)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to persist settings to .env: {e}",
+            )
+
+    # Re-init LLM providers and publishers so the new keys take effect
     llm_service._init_providers()
-    # Re-init publishers
     for pub in publish_service.publishers.values():
         pub.__init__()
 
     return {
-        "message": f"Updated: {', '.join(updated)}",
-        "note": "Changes take effect immediately for current session. Update .env file to persist.",
+        "message": f"Updated: {', '.join(updated) if updated else 'nothing'}",
+        "persisted_to": str(ENV_PATH),
+        "note": "Changes saved to .env and take effect immediately.",
     }

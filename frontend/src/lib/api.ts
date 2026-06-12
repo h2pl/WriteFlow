@@ -15,6 +15,7 @@ export interface Article {
   tags: string | null
   category: string | null
   cover_image: string | null
+  cover_mode: 'manual' | 'search' | 'ai' | null
   llm_provider: string | null
   llm_model: string | null
   prompt: string | null
@@ -102,6 +103,12 @@ export const articleApi = {
 
   delete: (id: number) =>
     api.delete(`/articles/${id}`),
+
+  batchDelete: (ids: number[]) =>
+    api.post<{ deleted: number; missing: number[] }>('/articles/batch-delete', { ids }),
+
+  fetchCover: (id: number, mode: 'manual' | 'search' | 'ai') =>
+    api.post<Article>(`/articles/${id}/cover-fetch`, { mode }),
 
   generate: (data: GenerateRequest) =>
     api.post<GenerateResponse>('/articles/generate', data),

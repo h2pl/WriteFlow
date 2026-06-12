@@ -24,6 +24,7 @@ class ArticleUpdate(BaseModel):
     tags: Optional[str] = None
     category: Optional[str] = None
     cover_image: Optional[str] = None
+    cover_mode: Optional[str] = Field(None, description="封面策略: manual, search, ai")
     status: Optional[str] = None
 
 
@@ -35,6 +36,7 @@ class ArticleResponse(BaseModel):
     tags: Optional[str]
     category: Optional[str]
     cover_image: Optional[str]
+    cover_mode: Optional[str]
     llm_provider: Optional[str]
     llm_model: Optional[str]
     prompt: Optional[str]
