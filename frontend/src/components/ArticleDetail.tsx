@@ -5,10 +5,8 @@ import {
   CheckCircle2, XCircle, Clock, ExternalLink, AlertCircle, ChevronDown,
   ImageIcon, Sparkles, Search, Upload, RefreshCw, X,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import MDEditor from '@uiw/react-md-editor'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
-import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { articleApi, configApi } from '@/lib/api'
 import type { Article, PublishRecord } from '@/lib/api'
@@ -413,7 +411,7 @@ export default function ArticleDetail({ article: initialArticle, onBack }: Props
               <Button
                 size="sm"
                 onClick={() => saveMutation.mutate()}
-                disabled={saveMutation.isPending || !hasChanges}
+                disabled={saveMutation.isPending}
               >
                 {saveMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -427,19 +425,21 @@ export default function ArticleDetail({ article: initialArticle, onBack }: Props
         </div>
       </div>
 
-      {/* Title */}
-      {isEditing ? (
-        <Input
-          value={draftTitle}
-          onChange={e => setDraftTitle(e.target.value)}
-          placeholder="文章标题..."
-          className="text-2xl font-bold h-12 border-none shadow-none focus-visible:ring-1 px-3 -ml-3"
-        />
-      ) : (
-        <h1 className="text-3xl font-bold tracking-tight leading-tight">
-          {article.title || '（无标题）'}
-        </h1>
-      )}
+      {/* Title — 原地编辑，不换容器 */}
+      <div className="text-3xl font-bold tracking-tight leading-tight min-h-[2.5rem]">
+        {isEditing ? (
+          <textarea
+            value={draftTitle}
+            onChange={e => setDraftTitle(e.target.value)}
+            placeholder="文章标题..."
+            rows={1}
+            className="w-full text-3xl font-bold tracking-tight leading-tight bg-transparent border-none outline-none resize-none p-0 focus:ring-0 placeholder:text-muted-foreground/40"
+            style={{ fieldSizing: 'content' }}
+          />
+        ) : (
+          <span>{article.title || '（无标题）'}</span>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Content */}
@@ -449,15 +449,17 @@ export default function ArticleDetail({ article: initialArticle, onBack }: Props
           </CardHeader>
           <CardContent className="p-6 pt-0">
             {isEditing ? (
-              <Textarea
-                value={draftContent}
-                onChange={e => setDraftContent(e.target.value)}
-                rows={25}
-                className="font-mono text-sm"
-              />
+              <div data-color-mode="light">
+                <MDEditor
+                  value={draftContent}
+                  onChange={v => setDraftContent(v || '')}
+                  height={500}
+                  visibleDragbar={false}
+                />
+              </div>
             ) : article.content ? (
               <div className="prose prose-neutral max-w-none dark:prose-invert">
-                <ReactMarkdown>{article.content}</ReactMarkdown>
+                <MDEditor.Markdown source={article.content} />
               </div>
             ) : (
               <div className="text-sm text-muted-foreground text-center py-8">

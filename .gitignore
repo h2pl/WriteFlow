@@ -37,3 +37,10 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime logs (created by start.sh / start.bat)
+.logs/
+*.pid
+
+# Startup helper docs (not part of the project README)
+start.README.md
