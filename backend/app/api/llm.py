@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.config import settings
-from app.models.schemas import LLMProviderInfo
+from app.models.schemas import LLMProviderInfo, PlatformInfo
 from app.services.llm_service import llm_service
 from app.services.publish_service import publish_service
 
@@ -18,9 +18,10 @@ async def list_providers():
     return [LLMProviderInfo(**p) for p in providers]
 
 
-@router.get("/platforms")
+@router.get("/platforms", response_model=list[PlatformInfo])
 async def list_platforms():
-    return publish_service.get_available_platforms()
+    platforms = publish_service.get_available_platforms()
+    return [PlatformInfo(**p) for p in platforms]
 
 
 @router.get("/models/{provider_name}")

@@ -98,3 +98,18 @@ class LLMProviderInfo(BaseModel):
     models: list[str]
     is_configured: bool
     default_model: Optional[str] = None
+
+
+class PlatformConfigField(BaseModel):
+    key: str
+    label: str
+    type: str = "text"  # text, password
+    placeholder: str = ""
+    description: Optional[str] = None
+
+
+class PlatformInfo(BaseModel):
+    name: str
+    display_name: str
+    is_configured: bool
+    config_fields: list[PlatformConfigField] = []

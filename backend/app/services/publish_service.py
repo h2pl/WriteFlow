@@ -19,6 +19,38 @@ from app.publishers.zhihu import ZhihuPublisher
 class PublishService:
     """Service for publishing articles to various platforms."""
 
+    PLATFORM_DEFINITIONS = [
+        {
+            "name": "wechat",
+            "display_name": "微信公众号",
+            "config_fields": [
+                {"key": "WECHAT_APP_ID", "label": "App ID", "type": "text", "placeholder": "wx..."},
+                {"key": "WECHAT_APP_SECRET", "label": "App Secret", "type": "password", "placeholder": "App Secret"},
+            ],
+        },
+        {
+            "name": "juejin",
+            "display_name": "掘金",
+            "config_fields": [
+                {"key": "JUEJIN_COOKIE", "label": "Cookie", "type": "password", "placeholder": "掘金登录后的 Cookie", "description": "从浏览器开发者工具中复制"},
+            ],
+        },
+        {
+            "name": "csdn",
+            "display_name": "CSDN",
+            "config_fields": [
+                {"key": "CSDN_COOKIE", "label": "Cookie", "type": "password", "placeholder": "CSDN 登录后的 Cookie", "description": "从浏览器开发者工具中复制"},
+            ],
+        },
+        {
+            "name": "zhihu",
+            "display_name": "知乎",
+            "config_fields": [
+                {"key": "ZHIHU_COOKIE", "label": "Cookie", "type": "password", "placeholder": "知乎登录后的 Cookie", "description": "从浏览器开发者工具中复制"},
+            ],
+        },
+    ]
+
     def __init__(self):
         self.publishers: dict[str, BasePublisher] = {
             "wechat": WeChatPublisher(),
@@ -30,10 +62,12 @@ class PublishService:
     def get_available_platforms(self) -> list[dict]:
         return [
             {
-                "name": name,
-                "is_configured": pub.is_configured(),
+                "name": defn["name"],
+                "display_name": defn["display_name"],
+                "is_configured": self.publishers[defn["name"]].is_configured(),
+                "config_fields": defn["config_fields"],
             }
-            for name, pub in self.publishers.items()
+            for defn in self.PLATFORM_DEFINITIONS
         ]
 
     async def publish_article(

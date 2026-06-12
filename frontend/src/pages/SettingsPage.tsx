@@ -2,13 +2,13 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Bot, Globe, Save, Loader2, Eye, EyeOff, RotateCcw, Check,
-  AlertTriangle, Key, Link, FileText,
+  AlertTriangle, Key, Link, FileText, Share2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { configApi } from '@/lib/api'
+import { configApi, type Platform } from '@/lib/api'
 
 /* ---------- types ---------- */
 
@@ -68,20 +68,6 @@ const sections: SectionDef[] = [
       { key: 'DEEPSEEK_API_KEY', label: 'API Key', type: 'password', icon: Key, placeholder: 'sk-...' },
       { key: 'DEEPSEEK_BASE_URL', label: 'Base URL', type: 'text', icon: Link, placeholder: 'https://api.deepseek.com' },
       { key: 'DEEPSEEK_MODEL', label: '默认模型', type: 'model-select', icon: FileText, placeholder: 'deepseek-chat', providerName: 'deepseek' },
-    ],
-  },
-  {
-    id: 'platforms',
-    title: '发布平台',
-    description: '配置各内容平台的发布凭证',
-    icon: Globe,
-    accent: 'text-violet-600',
-    fields: [
-      { key: 'WECHAT_APP_ID', label: '微信公众号 App ID', type: 'text', icon: Key, placeholder: 'wx...' },
-      { key: 'WECHAT_APP_SECRET', label: '微信公众号 App Secret', type: 'password', icon: Key, placeholder: 'App Secret' },
-      { key: 'JUEJIN_COOKIE', label: '掘金 Cookie', type: 'password', icon: Key, placeholder: '掘金登录后的 Cookie', description: '从浏览器开发者工具中复制' },
-      { key: 'CSDN_COOKIE', label: 'CSDN Cookie', type: 'password', icon: Key, placeholder: 'CSDN 登录后的 Cookie', description: '从浏览器开发者工具中复制' },
-      { key: 'ZHIHU_COOKIE', label: '知乎 Cookie', type: 'password', icon: Key, placeholder: '知乎登录后的 Cookie', description: '从浏览器开发者工具中复制' },
     ],
   },
 ]
@@ -184,15 +170,127 @@ export default function SettingsPage() {
 
   // Check if a section has configured fields
   const getSectionStatus = (sectionId: string) => {
-    if (sectionId === 'platforms') {
-      return platforms?.some(p => p.is_configured) ? 'partial' : 'empty'
-    }
     const provider = providers?.find(p => p.name === sectionId)
     if (provider?.is_configured) return 'configured'
     return 'empty'
   }
 
   const configuredProviders = providers?.filter(p => p.is_configured) || []
+
+  // Platform-specific accent colors
+  const platformAccents: Record<string, string> = {
+    wechat: 'text-green-600',
+    juejin: 'text-blue-600',
+    csdn: 'text-red-600',
+    zhihu: 'text-sky-600',
+  }
+
+  const renderPlatformCard = (platform: Platform) => {
+    const isExpanded = expandedSections.has(`platform-${platform.name}`)
+    const accent = platformAccents[platform.name] || 'text-violet-600'
+
+    return (
+      <Card key={platform.name}>
+        <CardHeader
+          className="cursor-pointer select-none hover:bg-muted/50 transition-colors"
+          onClick={() => toggleSection(`platform-${platform.name}`)}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`rounded-lg bg-muted p-2 ${accent}`}>
+                <Share2 className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-base">{platform.display_name}</CardTitle>
+                  {platform.is_configured ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-medium text-green-700">
+                      <Check className="h-3 w-3" /> 已配置
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                      未配置
+                    </span>
+                  )}
+                </div>
+                <CardDescription className="mt-0.5">
+                  {platform.config_fields.length === 1 ? 'Cookie 认证' : 'App ID + Secret 认证'}
+                </CardDescription>
+              </div>
+            </div>
+            <button className="text-muted-foreground p-1">
+              <svg
+                className={`h-5 w-5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
+        </CardHeader>
+
+        {isExpanded && (
+          <CardContent className="pt-0">
+            <div className="space-y-4">
+              {platform.config_fields.map(field => {
+                const isDirty = field.key in dirtyFields
+                const currentValue = isDirty ? dirtyFields[field.key] : ''
+                const savedValue = savedSettings?.[field.key]
+                const isPassword = field.type === 'password'
+                const showPw = showPasswords[field.key]
+
+                return (
+                  <div key={field.key} className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 text-sm font-medium">
+                      <Key className="h-3.5 w-3.5 text-muted-foreground" />
+                      {field.label}
+                      {isDirty && (
+                        <span className="text-xs text-amber-600 font-normal">(未保存)</span>
+                      )}
+                    </label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          type={isPassword && !showPw ? 'password' : 'text'}
+                          placeholder={savedValue || field.placeholder}
+                          value={currentValue}
+                          onChange={e => handleChange(field.key, e.target.value)}
+                          className={isDirty ? 'border-amber-400 focus-visible:ring-amber-400' : ''}
+                        />
+                        {isPassword && (
+                          <button
+                            type="button"
+                            onClick={() => togglePassword(field.key)}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                        )}
+                      </div>
+                      {isDirty && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 flex-shrink-0"
+                          onClick={() => handleReset(field.key)}
+                          title="撤销修改"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                    {field.description && (
+                      <p className="text-xs text-muted-foreground">{field.description}</p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        )}
+      </Card>
+    )
+  }
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -251,7 +349,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Setting Sections */}
+      {/* LLM Provider Sections */}
       {sections.map(section => {
         const isExpanded = expandedSections.has(section.id)
         const status = getSectionStatus(section.id)
@@ -372,6 +470,17 @@ export default function SettingsPage() {
           </Card>
         )
       })}
+
+      {/* Publishing Platforms */}
+      {platforms && platforms.length > 0 && (
+        <>
+          <div className="flex items-center gap-2 pt-2">
+            <Globe className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-lg font-semibold">发布平台</h2>
+          </div>
+          {platforms.map(renderPlatformCard)}
+        </>
+      )}
 
       {/* MCP Integration */}
       <Card>

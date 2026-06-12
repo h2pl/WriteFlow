@@ -70,9 +70,19 @@ export interface LLMProvider {
   default_model: string | null
 }
 
+export interface PlatformConfigField {
+  key: string
+  label: string
+  type: string
+  placeholder: string
+  description?: string
+}
+
 export interface Platform {
   name: string
+  display_name: string
   is_configured: boolean
+  config_fields: PlatformConfigField[]
 }
 
 // --- API Calls ---
