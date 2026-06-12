@@ -67,6 +67,7 @@ export interface LLMProvider {
   display_name: string
   models: string[]
   is_configured: boolean
+  default_model: string | null
 }
 
 export interface Platform {
@@ -77,8 +78,8 @@ export interface Platform {
 // --- API Calls ---
 
 export const articleApi = {
-  list: (page = 1, pageSize = 20, status?: string) =>
-    api.get<ArticleListResponse>('/articles', { params: { page, page_size: pageSize, status } }),
+  list: (page = 1, pageSize = 20, status?: string, search?: string) =>
+    api.get<ArticleListResponse>('/articles', { params: { page, page_size: pageSize, status, search } }),
 
   get: (id: number) =>
     api.get<Article>(`/articles/${id}`),
@@ -95,6 +96,46 @@ export const articleApi = {
   generate: (data: GenerateRequest) =>
     api.post<GenerateResponse>('/articles/generate', data),
 
+  generateStream: (data: GenerateRequest, onChunk: (chunk: string) => void, onDone: (article: Article) => void, onError: (error: string) => void) => {
+    const controller = new AbortController()
+    fetch('/api/articles/generate-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Request failed' }))
+        onError(err.detail || 'Request failed')
+        return
+      }
+      const reader = response.body?.getReader()
+      if (!reader) { onError('No reader'); return }
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.slice(6))
+              if (event.type === 'chunk') onChunk(event.content)
+              else if (event.type === 'done') onDone(event.article)
+              else if (event.type === 'error') onError(event.message)
+            } catch {}
+          }
+        }
+      }
+    }).catch((err) => {
+      if (err.name !== 'AbortError') onError(err.message)
+    })
+    return controller
+  },
+
   publish: (articleId: number, platforms: string[]) =>
     api.post<PublishRecord[]>(`/articles/${articleId}/publish`, { article_id: articleId, platforms }),
 
@@ -108,6 +149,15 @@ export const configApi = {
 
   getPlatforms: () =>
     api.get<Platform[]>('/llm/platforms'),
+
+  getSettings: () =>
+    api.get<Record<string, string | null>>('/llm/settings'),
+
+  updateSettings: (data: Record<string, string>) =>
+    api.put('/llm/settings', data),
+
+  fetchModels: (provider: string) =>
+    api.get<{ provider: string; models: string[] }>(`/llm/models/${provider}`),
 }
 
 export const healthApi = {

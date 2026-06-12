@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { Sparkles, Loader2, Copy, Check } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Sparkles, Loader2, Copy, Check, Square, Cpu } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -9,11 +9,16 @@ import { Select } from '@/components/ui/select'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { articleApi, configApi } from '@/lib/api'
-import type { GenerateRequest } from '@/lib/api'
+import type { GenerateRequest, Article } from '@/lib/api'
 
 export default function GeneratePage() {
   const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
+  const [streaming, setStreaming] = useState(false)
+  const [streamContent, setStreamContent] = useState('')
+  const [generatedArticle, setGeneratedArticle] = useState<Article | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
   const [form, setForm] = useState<GenerateRequest>({
     topic: '',
     style: 'tech_blog',
@@ -28,27 +33,81 @@ export default function GeneratePage() {
     queryFn: () => configApi.getProviders().then(r => r.data),
   })
 
-  const generateMutation = useMutation({
-    mutationFn: (data: GenerateRequest) => articleApi.generate(data).then(r => r.data),
+  const { data: settings } = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => configApi.getSettings().then(r => r.data),
   })
 
-  const result = generateMutation.data
+  // Auto-select the configured default provider + its default model
+  useEffect(() => {
+    if (providers && settings && !form.provider) {
+      const defaultProviderName = settings.DEFAULT_LLM_PROVIDER || ''
+      // Prefer the configured default provider, otherwise first configured
+      const target = providers.find(p => p.name === defaultProviderName && p.is_configured && p.models.length > 0)
+        || providers.find(p => p.is_configured && p.models.length > 0)
+      if (target) {
+        const model = target.default_model && target.models.includes(target.default_model)
+          ? target.default_model
+          : target.models[0]
+        setForm(f => ({ ...f, provider: target.name, model }))
+      }
+    }
+  }, [providers, settings])
+
+  const configuredProviders = providers?.filter(p => p.is_configured) || []
+
+  // Parse "provider:model" value from dropdown
+  const handleModelSelect = (value: string) => {
+    const sepIdx = value.indexOf(':')
+    if (sepIdx === -1) return
+    const provider = value.slice(0, sepIdx)
+    const model = value.slice(sepIdx + 1)
+    setForm(f => ({ ...f, provider, model }))
+  }
+
+  const currentValue = form.provider && form.model ? `${form.provider}:${form.model}` : ''
 
   const handleGenerate = () => {
     if (!form.topic.trim()) return
     const req = { ...form }
     if (!req.provider) delete req.provider
+    if (!req.model) delete req.model
     if (!req.extra_instructions) delete req.extra_instructions
-    generateMutation.mutate(req)
+
+    setStreaming(true)
+    setStreamContent('')
+    setGeneratedArticle(null)
+    setError(null)
+
+    abortRef.current = articleApi.generateStream(
+      req,
+      (chunk) => setStreamContent(prev => prev + chunk),
+      (article) => {
+        setGeneratedArticle(article)
+        setStreaming(false)
+      },
+      (errMsg) => {
+        setError(errMsg)
+        setStreaming(false)
+      },
+    )
   }
 
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort()
+    setStreaming(false)
+  }, [])
+
   const handleCopy = () => {
-    if (result?.article.content) {
-      navigator.clipboard.writeText(result.article.content)
+    const content = generatedArticle?.content || streamContent
+    if (content) {
+      navigator.clipboard.writeText(content)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
   }
+
+  const displayContent = generatedArticle?.content || streamContent
 
   return (
     <div className="space-y-6">
@@ -115,17 +174,30 @@ export default function GeneratePage() {
               </div>
             </div>
 
+            {/* Model Selection - Two-level dropdown */}
             <div>
-              <label className="text-sm font-medium mb-1.5 block">AI 模型</label>
-              <Select
-                value={form.provider || ''}
-                onChange={e => setForm(f => ({ ...f, provider: e.target.value }))}
-              >
-                <option value="">默认</option>
-                {providers?.filter(p => p.is_configured).map(p => (
-                  <option key={p.name} value={p.name}>{p.display_name}</option>
-                ))}
-              </Select>
+              <label className="text-sm font-medium flex items-center gap-1.5 mb-1.5">
+                <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
+                AI 模型
+              </label>
+              {configuredProviders.length > 0 ? (
+                <Select
+                  value={currentValue}
+                  onChange={e => handleModelSelect(e.target.value)}
+                >
+                  {configuredProviders.map(p => (
+                    <optgroup key={p.name} label={p.display_name}>
+                      {p.models.map(m => (
+                        <option key={`${p.name}:${m}`} value={`${p.name}:${m}`}>
+                          {m}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </Select>
+              ) : (
+                <p className="text-sm text-muted-foreground py-2">请先在配置页面添加 AI 模型</p>
+              )}
             </div>
 
             <div>
@@ -140,13 +212,13 @@ export default function GeneratePage() {
 
             <Button
               className="w-full"
-              onClick={handleGenerate}
-              disabled={!form.topic.trim() || generateMutation.isPending}
+              onClick={streaming ? handleStop : handleGenerate}
+              disabled={!streaming && !form.topic.trim()}
             >
-              {generateMutation.isPending ? (
+              {streaming ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  生成中...
+                  <Square className="h-4 w-4" />
+                  停止生成
                 </>
               ) : (
                 <>
@@ -164,51 +236,51 @@ export default function GeneratePage() {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle>
-                  {result ? result.article.title : '生成结果'}
+                  {generatedArticle ? generatedArticle.title : '生成结果'}
                 </CardTitle>
-                {result && (
+                {generatedArticle && (
                   <CardDescription className="mt-1 flex items-center gap-2">
-                    <Badge variant="secondary">{result.article.llm_provider}</Badge>
-                    <Badge variant="outline">{result.article.llm_model}</Badge>
-                    <span>耗时 {result.generation_time.toFixed(1)}s</span>
+                    <Badge variant="secondary">{generatedArticle.llm_provider}</Badge>
+                    <Badge variant="outline">{generatedArticle.llm_model}</Badge>
                   </CardDescription>
                 )}
               </div>
-              {result && (
+              {(generatedArticle || streamContent) && (
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={handleCopy}>
                     {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                     {copied ? '已复制' : '复制'}
                   </Button>
-                  <Button size="sm" onClick={() => navigate(`/articles/${result.article.id}`)}>
-                    查看详情
-                  </Button>
+                  {generatedArticle && (
+                    <Button size="sm" onClick={() => navigate(`/articles/${generatedArticle.id}`)}>
+                      查看详情
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
           </CardHeader>
           <CardContent>
-            {generateMutation.isPending && (
+            {streaming && !streamContent && (
               <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
                 <Loader2 className="h-8 w-8 animate-spin mb-4" />
                 <p>AI 正在创作中，请稍候...</p>
-                <p className="text-xs mt-1">通常需要 10-30 秒</p>
               </div>
             )}
-            {generateMutation.isError && (
+            {error && (
               <div className="rounded-lg bg-destructive/10 p-4 text-sm text-destructive">
-                生成失败：{(generateMutation.error as Error).message}
+                生成失败：{error}
               </div>
             )}
-            {result && (
+            {displayContent && (
               <div className="prose prose-neutral max-w-none dark:prose-invert">
-                <ReactMarkdown>{result.article.content}</ReactMarkdown>
+                <ReactMarkdown>{displayContent}</ReactMarkdown>
               </div>
             )}
-            {!result && !generateMutation.isPending && !generateMutation.isError && (
+            {!displayContent && !streaming && !error && (
               <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
                 <Sparkles className="h-12 w-12 mb-4 opacity-20" />
-                <p>输入主题后点击"开始生成"</p>
+                <p>输入主题后点击“开始生成”</p>
               </div>
             )}
           </CardContent>

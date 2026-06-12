@@ -1,10 +1,107 @@
-import { useQuery } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Bot, Globe } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  Bot, Globe, Save, Loader2, Eye, EyeOff, RotateCcw, Check,
+  AlertTriangle, Key, Link, FileText,
+} from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import { configApi } from '@/lib/api'
 
+/* ---------- types ---------- */
+
+interface FieldDef {
+  key: string
+  label: string
+  type: 'text' | 'password' | 'textarea' | 'model-select'
+  icon: typeof Key | typeof Link | typeof FileText
+  placeholder: string
+  description?: string
+  /** For model-select fields: which provider's model list to use */
+  providerName?: string
+}
+
+interface SectionDef {
+  id: string
+  title: string
+  description: string
+  icon: typeof Bot | typeof Globe
+  fields: FieldDef[]
+  accent: string
+}
+
+/* ---------- section definitions ---------- */
+
+const sections: SectionDef[] = [
+  {
+    id: 'openai',
+    title: 'OpenAI',
+    description: '配置 OpenAI API 密钥和模型参数',
+    icon: Bot,
+    accent: 'text-emerald-600',
+    fields: [
+      { key: 'OPENAI_API_KEY', label: 'API Key', type: 'password', icon: Key, placeholder: 'sk-...' },
+      { key: 'OPENAI_BASE_URL', label: 'Base URL', type: 'text', icon: Link, placeholder: 'https://api.openai.com/v1', description: '留空使用默认地址' },
+      { key: 'OPENAI_MODEL', label: '默认模型', type: 'model-select', icon: FileText, placeholder: 'gpt-4.1', providerName: 'openai' },
+    ],
+  },
+  {
+    id: 'anthropic',
+    title: 'Anthropic',
+    description: '配置 Anthropic Claude API',
+    icon: Bot,
+    accent: 'text-orange-600',
+    fields: [
+      { key: 'ANTHROPIC_API_KEY', label: 'API Key', type: 'password', icon: Key, placeholder: 'sk-ant-...' },
+      { key: 'ANTHROPIC_MODEL', label: '默认模型', type: 'model-select', icon: FileText, placeholder: 'claude-sonnet-4-6', providerName: 'anthropic' },
+    ],
+  },
+  {
+    id: 'deepseek',
+    title: 'DeepSeek',
+    description: '配置 DeepSeek API',
+    icon: Bot,
+    accent: 'text-blue-600',
+    fields: [
+      { key: 'DEEPSEEK_API_KEY', label: 'API Key', type: 'password', icon: Key, placeholder: 'sk-...' },
+      { key: 'DEEPSEEK_BASE_URL', label: 'Base URL', type: 'text', icon: Link, placeholder: 'https://api.deepseek.com' },
+      { key: 'DEEPSEEK_MODEL', label: '默认模型', type: 'model-select', icon: FileText, placeholder: 'deepseek-chat', providerName: 'deepseek' },
+    ],
+  },
+  {
+    id: 'platforms',
+    title: '发布平台',
+    description: '配置各内容平台的发布凭证',
+    icon: Globe,
+    accent: 'text-violet-600',
+    fields: [
+      { key: 'WECHAT_APP_ID', label: '微信公众号 App ID', type: 'text', icon: Key, placeholder: 'wx...' },
+      { key: 'WECHAT_APP_SECRET', label: '微信公众号 App Secret', type: 'password', icon: Key, placeholder: 'App Secret' },
+      { key: 'JUEJIN_COOKIE', label: '掘金 Cookie', type: 'password', icon: Key, placeholder: '掘金登录后的 Cookie', description: '从浏览器开发者工具中复制' },
+      { key: 'CSDN_COOKIE', label: 'CSDN Cookie', type: 'password', icon: Key, placeholder: 'CSDN 登录后的 Cookie', description: '从浏览器开发者工具中复制' },
+      { key: 'ZHIHU_COOKIE', label: '知乎 Cookie', type: 'password', icon: Key, placeholder: '知乎登录后的 Cookie', description: '从浏览器开发者工具中复制' },
+    ],
+  },
+]
+
+/* ---------- component ---------- */
+
 export default function SettingsPage() {
+  const queryClient = useQueryClient()
+  const [dirtyFields, setDirtyFields] = useState<Record<string, string>>({})
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({})
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
+    // Auto-expand unconfigured sections
+    const initial = new Set<string>()
+    sections.forEach(s => {
+      if (s.id === 'openai' || s.id === 'deepseek') initial.add(s.id)
+    })
+    return initial
+  })
+  const [defaultProvider, setDefaultProvider] = useState('openai')
+
   const { data: providers } = useQuery({
     queryKey: ['providers'],
     queryFn: () => configApi.getProviders().then(r => r.data),
@@ -15,118 +112,275 @@ export default function SettingsPage() {
     queryFn: () => configApi.getPlatforms().then(r => r.data),
   })
 
-  const platformLabels: Record<string, { name: string; desc: string }> = {
-    wechat: { name: '微信公众号', desc: '需要配置 WECHAT_APP_ID 和 WECHAT_APP_SECRET' },
-    juejin: { name: '掘金', desc: '需要配置 JUEJIN_COOKIE' },
-    csdn: { name: 'CSDN', desc: '需要配置 CSDN_COOKIE' },
-    zhihu: { name: '知乎', desc: '需要配置 ZHIHU_COOKIE' },
+  const { data: savedSettings } = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => configApi.getSettings().then(r => r.data),
+  })
+
+  // Sync default provider from saved settings
+  useEffect(() => {
+    if (savedSettings?.DEFAULT_LLM_PROVIDER) {
+      setDefaultProvider(savedSettings.DEFAULT_LLM_PROVIDER)
+    }
+  }, [savedSettings])
+
+  const saveMutation = useMutation({
+    mutationFn: (data: Record<string, string>) => configApi.updateSettings(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['providers'] })
+      queryClient.invalidateQueries({ queryKey: ['platforms'] })
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+      setDirtyFields({})
+    },
+  })
+
+  const handleChange = (key: string, value: string) => {
+    setDirtyFields(prev => {
+      if (value === '') {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      }
+      return { ...prev, [key]: value }
+    })
   }
 
+  const handleReset = (key: string) => {
+    setDirtyFields(prev => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  const togglePassword = (key: string) => {
+    setShowPasswords(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  const toggleSection = (id: string) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleSave = () => {
+    const updates: Record<string, string> = {}
+    for (const [key, value] of Object.entries(dirtyFields)) {
+      const trimmed = value.trim()
+      if (trimmed) updates[key] = trimmed
+    }
+    if (defaultProvider !== savedSettings?.DEFAULT_LLM_PROVIDER) {
+      updates.DEFAULT_LLM_PROVIDER = defaultProvider
+    }
+    if (Object.keys(updates).length > 0) {
+      saveMutation.mutate(updates)
+    }
+  }
+
+  const hasChanges = Object.keys(dirtyFields).length > 0 || defaultProvider !== savedSettings?.DEFAULT_LLM_PROVIDER
+
+  // Check if a section has configured fields
+  const getSectionStatus = (sectionId: string) => {
+    if (sectionId === 'platforms') {
+      return platforms?.some(p => p.is_configured) ? 'partial' : 'empty'
+    }
+    const provider = providers?.find(p => p.name === sectionId)
+    if (provider?.is_configured) return 'configured'
+    return 'empty'
+  }
+
+  const configuredProviders = providers?.filter(p => p.is_configured) || []
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">配置</h1>
-        <p className="text-muted-foreground mt-1">查看 AI 模型和发布平台的配置状态</p>
+    <div className="space-y-6 max-w-3xl">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">配置</h1>
+          <p className="text-muted-foreground mt-1">管理 AI 模型和发布平台配置</p>
+        </div>
+        {hasChanges && (
+          <Button onClick={handleSave} disabled={saveMutation.isPending} className="shadow-sm">
+            {saveMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+            ) : (
+              <Save className="h-4 w-4 mr-1.5" />
+            )}
+            保存更改
+          </Button>
+        )}
       </div>
 
-      {/* LLM Providers */}
+      {/* Save feedback */}
+      {saveMutation.isSuccess && (
+        <div className="flex items-center gap-2 rounded-lg bg-green-500/10 border border-green-500/20 px-4 py-3 text-sm text-green-700">
+          <Check className="h-4 w-4 flex-shrink-0" />
+          <span>配置已保存并立即生效。如需持久化请同步更新 <code className="bg-green-500/10 px-1 rounded text-xs">.env</code> 文件。</span>
+        </div>
+      )}
+      {saveMutation.isError && (
+        <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          <span>保存失败：{(saveMutation.error as Error).message}</span>
+        </div>
+      )}
+
+      {/* Default Provider Selector */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Bot className="h-5 w-5" />
-            AI 模型
-          </CardTitle>
-          <CardDescription>
-            在后端 <code className="bg-muted px-1.5 py-0.5 rounded text-xs">.env</code> 文件中配置 API Key
-          </CardDescription>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base">默认模型</CardTitle>
+          <CardDescription>选择创作页面默认使用的 AI 模型提供商</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {providers?.map(provider => (
-              <div
-                key={provider.name}
-                className="flex items-center justify-between rounded-lg border p-4"
-              >
+          <Select
+            value={defaultProvider}
+            onChange={e => setDefaultProvider(e.target.value)}
+            className="max-w-xs"
+          >
+            {configuredProviders.length > 0 ? (
+              configuredProviders.map(p => (
+                <option key={p.name} value={p.name}>{p.display_name}</option>
+              ))
+            ) : (
+              <option value="">请先配置至少一个模型提供商</option>
+            )}
+          </Select>
+        </CardContent>
+      </Card>
+
+      {/* Setting Sections */}
+      {sections.map(section => {
+        const isExpanded = expandedSections.has(section.id)
+        const status = getSectionStatus(section.id)
+        const Icon = section.icon
+
+        return (
+          <Card key={section.id}>
+            <CardHeader
+              className="cursor-pointer select-none hover:bg-muted/50 transition-colors"
+              onClick={() => toggleSection(section.id)}
+            >
+              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  {provider.is_configured ? (
-                    <CheckCircle className="h-5 w-5 text-green-500" />
-                  ) : (
-                    <XCircle className="h-5 w-5 text-muted-foreground" />
-                  )}
+                  <div className={`rounded-lg bg-muted p-2 ${section.accent}`}>
+                    <Icon className="h-4 w-4" />
+                  </div>
                   <div>
-                    <p className="font-medium">{provider.display_name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      可用模型：{provider.models.join(', ')}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <CardTitle className="text-base">{section.title}</CardTitle>
+                      {status === 'configured' && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-medium text-green-700">
+                          <Check className="h-3 w-3" /> 已配置
+                        </span>
+                      )}
+                    </div>
+                    <CardDescription className="mt-0.5">{section.description}</CardDescription>
                   </div>
                 </div>
-                <Badge variant={provider.is_configured ? 'success' : 'outline'}>
-                  {provider.is_configured ? '已配置' : '未配置'}
-                </Badge>
+                <button className="text-muted-foreground p-1">
+                  <svg
+                    className={`h-5 w-5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+            </CardHeader>
 
-      {/* Publishing Platforms */}
+            {isExpanded && (
+              <CardContent className="pt-0">
+                <div className="space-y-4">
+                  {section.fields.map(field => {
+                    const FieldIcon = field.icon
+                    const isDirty = field.key in dirtyFields
+                    const currentValue = isDirty ? dirtyFields[field.key] : ''
+                    const savedValue = savedSettings?.[field.key]
+                    const isPassword = field.type === 'password'
+                    const isModelSelect = field.type === 'model-select'
+                    const showPw = showPasswords[field.key]
+
+                    // Get model options for model-select fields
+                    const modelOptions = isModelSelect && field.providerName
+                      ? providers?.find(p => p.name === field.providerName)?.models || []
+                      : []
+
+                    return (
+                      <div key={field.key} className="space-y-1.5">
+                        <label className="flex items-center gap-1.5 text-sm font-medium">
+                          <FieldIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                          {field.label}
+                          {isDirty && (
+                            <span className="text-xs text-amber-600 font-normal">(未保存)</span>
+                          )}
+                        </label>
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            {isModelSelect ? (
+                              <Select
+                                value={currentValue || savedValue || ''}
+                                onChange={e => handleChange(field.key, e.target.value)}
+                                className={isDirty ? 'border-amber-400 focus-visible:ring-amber-400' : ''}
+                              >
+                                {modelOptions.map(m => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))}
+                              </Select>
+                            ) : (
+                              <Input
+                                type={isPassword && !showPw ? 'password' : 'text'}
+                                placeholder={savedValue || field.placeholder}
+                                value={currentValue}
+                                onChange={e => handleChange(field.key, e.target.value)}
+                                className={isDirty ? 'border-amber-400 focus-visible:ring-amber-400' : ''}
+                              />
+                            )}
+                            {isPassword && !isModelSelect && (
+                              <button
+                                type="button"
+                                onClick={() => togglePassword(field.key)}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                              </button>
+                            )}
+                          </div>
+                          {isDirty && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 flex-shrink-0"
+                              onClick={() => handleReset(field.key)}
+                              title="撤销修改"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                        {field.description && (
+                          <p className="text-xs text-muted-foreground">{field.description}</p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            )}
+          </Card>
+        )
+      })}
+
+      {/* MCP Integration */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Globe className="h-5 w-5" />
-            发布平台
-          </CardTitle>
-          <CardDescription>
-            在后端 <code className="bg-muted px-1.5 py-0.5 rounded text-xs">.env</code> 文件中配置平台凭证
-          </CardDescription>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base">MCP 集成</CardTitle>
+          <CardDescription>在 AI Agent 中通过 MCP 协议使用 WriteFlow</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {platforms?.map(platform => {
-              const info = platformLabels[platform.name] || { name: platform.name, desc: '' }
-              return (
-                <div
-                  key={platform.name}
-                  className="flex items-center justify-between rounded-lg border p-4"
-                >
-                  <div className="flex items-center gap-3">
-                    {platform.is_configured ? (
-                      <CheckCircle className="h-5 w-5 text-green-500" />
-                    ) : (
-                      <XCircle className="h-5 w-5 text-muted-foreground" />
-                    )}
-                    <div>
-                      <p className="font-medium">{info.name}</p>
-                      <p className="text-xs text-muted-foreground">{info.desc}</p>
-                    </div>
-                  </div>
-                  <Badge variant={platform.is_configured ? 'success' : 'outline'}>
-                    {platform.is_configured ? '已配置' : '未配置'}
-                  </Badge>
-                </div>
-              )
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Help */}
-      <Card>
-        <CardHeader>
-          <CardTitle>配置说明</CardTitle>
-        </CardHeader>
-        <CardContent className="prose prose-sm max-w-none dark:prose-invert">
-          <ol className="text-sm space-y-2">
-            <li>复制 <code>.env.example</code> 为 <code>.env</code></li>
-            <li>填入对应的 API Key / Cookie</li>
-            <li>重启后端服务使配置生效</li>
-          </ol>
-          <div className="mt-4 rounded-lg bg-muted p-4 text-sm">
-            <p className="font-medium mb-2">MCP 集成</p>
-            <p className="text-muted-foreground">
-              WriteFlow 同时提供 MCP 协议支持，可在 Agent 配置中添加：
-            </p>
-            <pre className="mt-2 text-xs bg-background p-3 rounded">
+          <pre className="text-xs bg-muted rounded-lg p-4 overflow-x-auto">
 {`{
   "mcpServers": {
     "writeflow": {
@@ -136,8 +390,7 @@ export default function SettingsPage() {
     }
   }
 }`}
-            </pre>
-          </div>
+          </pre>
         </CardContent>
       </Card>
     </div>

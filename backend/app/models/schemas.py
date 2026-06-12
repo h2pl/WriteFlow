@@ -97,3 +97,4 @@ class LLMProviderInfo(BaseModel):
     display_name: str
     models: list[str]
     is_configured: bool
+    default_model: Optional[str] = None
