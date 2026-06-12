@@ -193,7 +193,7 @@ async def _handle_publish(args: dict) -> list[TextContent]:
         if not article:
             return [TextContent(type="text", text=f"❌ 文章 ID {args['article_id']} 不存在")]
 
-        records = await publish_service.publish_article(db, article, args["platforms"])
+        records = await publish_service.publish_article_sync(db, article, args["platforms"])
         await db.commit()
 
     lines = [f"📤 发布结果 - 《{article.title}》:\n"]

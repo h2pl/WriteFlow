@@ -37,6 +37,12 @@ export default function ArticleDetail({ article: initialArticle, onBack }: Props
   const { data: publishRecords, refetch: refetchRecords } = useQuery({
     queryKey: ['publish-records', article.id],
     queryFn: () => articleApi.getPublishRecords(article.id).then(r => r.data),
+    refetchInterval: (query) => {
+      const records = query.state.data
+      if (!records) return false
+      const hasPending = records.some(r => r.status === 'pending')
+      return hasPending ? 2000 : false
+    },
   })
 
   const updateMutation = useMutation({
@@ -200,9 +206,16 @@ export default function ArticleDetail({ article: initialArticle, onBack }: Props
                   <div key={record.id} className="flex items-center justify-between text-sm">
                     <span>{platformLabels[record.platform] || record.platform}</span>
                     <div className="flex items-center gap-2">
-                      <Badge variant={record.status === 'success' ? 'success' : 'destructive'}>
-                        {record.status === 'success' ? '成功' : '失败'}
+                      <Badge variant={
+                        record.status === 'success' ? 'success' :
+                        record.status === 'pending' ? 'warning' : 'destructive'
+                      }>
+                        {record.status === 'success' ? '成功' :
+                         record.status === 'pending' ? '发布中...' : '失败'}
                       </Badge>
+                      {record.status === 'pending' && (
+                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                      )}
                       {record.platform_url && (
                         <a
                           href={record.platform_url}

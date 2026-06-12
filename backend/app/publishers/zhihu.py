@@ -17,6 +17,7 @@ class ZhihuPublisher(BasePublisher):
     platform_name = "zhihu"
 
     BASE_URL = "https://zhuanlan.zhihu.com/api"
+    TIMEOUT = 30
 
     def __init__(self):
         self.cookie = settings.ZHIHU_COOKIE
@@ -49,7 +50,7 @@ class ZhihuPublisher(BasePublisher):
             html_content = self._markdown_to_html(content)
 
             # Step 1: Create draft
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 draft_resp = await client.post(
                     f"{self.BASE_URL}/articles/drafts",
                     headers=headers,
@@ -70,7 +71,7 @@ class ZhihuPublisher(BasePublisher):
                 )
 
             # Step 2: Publish the draft
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 pub_resp = await client.put(
                     f"{self.BASE_URL}/articles/{draft_id}/publish",
                     headers=headers,

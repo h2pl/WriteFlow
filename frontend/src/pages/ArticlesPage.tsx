@@ -1,13 +1,13 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FileText, Trash2, Eye, ChevronLeft, ChevronRight } from 'lucide-react'
+import { FileText, Trash2, Eye, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { articleApi } from '@/lib/api'
-import type { Article } from '@/lib/api'
-import ArticleDetail from '@/components/ArticleDetail'
 
 const statusMap: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'success' | 'destructive' | 'warning' }> = {
   draft: { label: '草稿', variant: 'secondary' },
@@ -20,35 +20,23 @@ const statusMap: Record<string, { label: string; variant: 'default' | 'secondary
 }
 
 export default function ArticlesPage() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState('')
-  const [selectedArticle, setSelectedArticle] = useState<Article | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const { data, isLoading } = useQuery({
-    queryKey: ['articles', page, statusFilter],
-    queryFn: () => articleApi.list(page, 20, statusFilter || undefined).then(r => r.data),
+    queryKey: ['articles', page, statusFilter, searchQuery],
+    queryFn: () => articleApi.list(page, 20, statusFilter || undefined, searchQuery || undefined).then(r => r.data),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => articleApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['articles'] })
-      if (selectedArticle) setSelectedArticle(null)
     },
   })
-
-  if (selectedArticle) {
-    return (
-      <ArticleDetail
-        article={selectedArticle}
-        onBack={() => {
-          setSelectedArticle(null)
-          queryClient.invalidateQueries({ queryKey: ['articles'] })
-        }}
-      />
-    )
-  }
 
   const totalPages = data ? Math.ceil(data.total / data.page_size) : 0
 
@@ -62,6 +50,15 @@ export default function ArticlesPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="搜索文章..."
+              value={searchQuery}
+              onChange={e => { setSearchQuery(e.target.value); setPage(1) }}
+              className="w-48 pl-9"
+            />
+          </div>
           <Select
             value={statusFilter}
             onChange={e => { setStatusFilter(e.target.value); setPage(1) }}
@@ -113,7 +110,7 @@ export default function ArticlesPage() {
                       variant="ghost"
                       size="icon"
                       title="查看"
-                      onClick={() => setSelectedArticle(article)}
+                      onClick={() => navigate(`/articles/${article.id}`)}
                     >
                       <Eye className="h-4 w-4" />
                     </Button>

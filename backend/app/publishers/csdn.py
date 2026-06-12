@@ -16,6 +16,7 @@ class CSDNPublisher(BasePublisher):
     platform_name = "csdn"
 
     BASE_URL = "https://blog-console-api.csdn.net/v1"
+    TIMEOUT = 30
 
     def __init__(self):
         self.cookie = settings.CSDN_COOKIE
@@ -60,7 +61,7 @@ class CSDNPublisher(BasePublisher):
                 payload["cover_images"] = [kwargs["cover_image"]]
                 payload["cover_type"] = 1
 
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 resp = await client.post(
                     f"{self.BASE_URL}/article/saveArticle",
                     headers=headers,

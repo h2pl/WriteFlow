@@ -1,6 +1,9 @@
 """Article API routes."""
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +19,7 @@ from app.models.schemas import (
     PublishRecordResponse,
     PublishRequest,
 )
-from app.services.llm_service import llm_service
+from app.services.llm_service import llm_service, build_generation_prompt
 from app.services.publish_service import publish_service
 
 router = APIRouter(prefix="/articles", tags=["articles"])
@@ -27,6 +30,7 @@ async def list_articles(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status: str | None = None,
+    search: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Article).order_by(Article.created_at.desc())
@@ -35,6 +39,15 @@ async def list_articles(
     if status:
         query = query.where(Article.status == status)
         count_query = count_query.where(Article.status == status)
+
+    if search:
+        search_filter = (
+            Article.title.ilike(f"%{search}%")
+            | Article.content.ilike(f"%{search}%")
+            | Article.tags.ilike(f"%{search}%")
+        )
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
 
     total = (await db.execute(count_query)).scalar() or 0
     result = await db.execute(query.offset((page - 1) * page_size).limit(page_size))
@@ -163,3 +176,65 @@ async def get_publish_records(
 ):
     records = await publish_service.get_publish_records(db, article_id)
     return [PublishRecordResponse.model_validate(r) for r in records]
+
+
+@router.post("/generate-stream")
+async def generate_article_stream(
+    data: GenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """SSE streaming article generation."""
+    try:
+        provider = llm_service.get_provider(data.provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    prompt = build_generation_prompt(
+        data.topic, data.style, data.language, data.length, data.extra_instructions
+    )
+    model_name = data.model or provider.default_model
+    provider_name = data.provider or next(
+        (name for name in llm_service.providers if llm_service.providers[name] is provider), "unknown"
+    )
+
+    async def event_generator():
+        full_content = ""
+        try:
+            async for chunk in provider.generate_stream(prompt, model_name):
+                full_content += chunk
+                yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+
+            # Extract title
+            title = data.topic
+            for line in full_content.strip().split("\n"):
+                stripped = line.strip()
+                if stripped.startswith("# "):
+                    title = stripped[2:].strip()
+                    break
+
+            # Save article
+            article = Article(
+                title=title,
+                content=full_content,
+                prompt=prompt,
+                llm_provider=provider_name,
+                llm_model=model_name,
+                status=ArticleStatus.GENERATED,
+            )
+            db.add(article)
+            await db.flush()
+            await db.refresh(article)
+
+            yield f"data: {json.dumps({'type': 'done', 'article': ArticleResponse.model_validate(article).model_dump(mode='json')})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

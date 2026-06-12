@@ -25,6 +25,7 @@ class WeChatPublisher(BasePublisher):
     platform_name = "wechat"
 
     BASE_URL = "https://api.weixin.qq.com/cgi-bin"
+    TIMEOUT = 30
 
     def __init__(self):
         self.app_id = settings.WECHAT_APP_ID
@@ -39,7 +40,7 @@ class WeChatPublisher(BasePublisher):
         if self._access_token and time.time() < self._token_expires_at:
             return self._access_token
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
             resp = await client.get(
                 f"{self.BASE_URL}/token",
                 params={
@@ -69,6 +70,29 @@ class WeChatPublisher(BasePublisher):
 </div>"""
         return styled_html
 
+    async def _upload_image(self, access_token: str, image_url: str) -> str:
+        """Upload an image to WeChat and return media_id."""
+        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
+            if image_url.startswith("http"):
+                img_resp = await client.get(image_url, timeout=30)
+                img_data = img_resp.content
+                content_type = img_resp.headers.get("content-type", "image/jpeg")
+            else:
+                import base64
+                img_data = base64.b64decode(image_url)
+                content_type = "image/jpeg"
+
+            resp = await client.post(
+                f"{self.BASE_URL}/media/upload",
+                params={"access_token": access_token, "type": "image"},
+                files={"media": ("cover.jpg", img_data, content_type)},
+            )
+            data = resp.json()
+
+        if "media_id" not in data:
+            raise ValueError(f"Failed to upload image: {data}")
+        return data["media_id"]
+
     async def publish(self, title: str, content: str, **kwargs) -> PublishResult:
         if not self.is_configured():
             return PublishResult(
@@ -81,8 +105,17 @@ class WeChatPublisher(BasePublisher):
             access_token = await self._get_access_token()
             html_content = self._markdown_to_html(content)
 
+            # Upload cover image for thumb_media_id (required by WeChat)
+            thumb_media_id = kwargs.get("thumb_media_id", "")
+            cover_image = kwargs.get("cover_image")
+            if not thumb_media_id and cover_image:
+                try:
+                    thumb_media_id = await self._upload_image(access_token, cover_image)
+                except Exception:
+                    thumb_media_id = ""
+
             # Add draft via the draft API
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 resp = await client.post(
                     f"{self.BASE_URL}/draft/add",
                     params={"access_token": access_token},
@@ -94,6 +127,7 @@ class WeChatPublisher(BasePublisher):
                                 "content": html_content,
                                 "digest": kwargs.get("summary", ""),
                                 "content_source_url": kwargs.get("source_url", ""),
+                                "thumb_media_id": thumb_media_id,
                                 "need_open_comment": 0,
                             }
                         ]

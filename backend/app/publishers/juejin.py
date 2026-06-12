@@ -16,12 +16,20 @@ class JuejinPublisher(BasePublisher):
     platform_name = "juejin"
 
     BASE_URL = "https://api.juejin.cn/content_api/v1"
+    TIMEOUT = 30
 
     def __init__(self):
         self.cookie = settings.JUEJIN_COOKIE
 
     def is_configured(self) -> bool:
         return bool(self.cookie)
+
+    def _get_headers(self) -> dict:
+        return {
+            "Cookie": self.cookie,
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
 
     async def publish(self, title: str, content: str, **kwargs) -> PublishResult:
         if not self.is_configured():
@@ -32,14 +40,10 @@ class JuejinPublisher(BasePublisher):
             )
 
         try:
-            headers = {
-                "Cookie": self.cookie,
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            }
+            headers = self._get_headers()
 
             # Step 1: Create draft
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 draft_resp = await client.post(
                     f"{self.BASE_URL}/article/draft",
                     headers=headers,
@@ -64,7 +68,7 @@ class JuejinPublisher(BasePublisher):
             draft_id = draft_data["data"]["id"]
 
             # Step 2: Publish the draft
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 pub_resp = await client.post(
                     f"{self.BASE_URL}/article/publish",
                     headers=headers,
