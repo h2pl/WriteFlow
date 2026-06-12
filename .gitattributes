@@ -1,0 +1,23 @@
+# Force Unix line endings for shell scripts (Windows checkouts won't break them)
+*.sh    text eol=lf
+
+# Allow shell scripts to keep their executable bit
+*.sh    -text
+
+# Windows batch files: keep CRLF for native Windows execution
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Source code
+*.py    text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
